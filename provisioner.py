@@ -50,6 +50,7 @@ from datetime import datetime, timezone
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ENV_FILE = os.path.join(SCRIPT_DIR, "provisioner.env")
 SETUP_SCRIPT = os.path.join(SCRIPT_DIR, "setup_officer_bot.sh")
+TEARDOWN_SCRIPT = os.path.join(SCRIPT_DIR, "teardown_officer_bot.sh")
 
 MODEL = "otm.whatsapp.lead.bot"
 
@@ -129,16 +130,29 @@ def run_setup_script(slug, addons_dir):
     return port, token, log
 
 
-def main():
-    cfg = load_config()
-    uid, models = connect(cfg)
+def run_teardown_script(slug, addons_dir):
+    result = subprocess.run(
+        [TEARDOWN_SCRIPT, slug],
+        cwd=addons_dir,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    log = (result.stdout or "") + (result.stderr or "")
+    if result.returncode != 0:
+        raise RuntimeError(f"teardown_officer_bot.sh exited {result.returncode}:\n{log[-4000:]}")
+    return log
 
+
+def process_creations(models, cfg, uid):
+    # deactivated records (removal in progress/done) are irrelevant here,
+    # and creation requests are always on active records anyway - the
+    # default active-only search is correct.
     requested_ids = odoo_call(
         models, cfg, uid, "search", [["provision_state", "=", "requested"]]
     )
     if not requested_ids:
-        print(f"[{datetime.now(timezone.utc).isoformat()}] No provisioning requests pending.")
-        return
+        return 0
 
     records = odoo_call(
         models, cfg, uid, "read", requested_ids, fields=["id", "name", "provision_slug", "user_id"]
@@ -146,7 +160,7 @@ def main():
 
     for rec in records:
         slug = rec.get("provision_slug")
-        print(f"==> Provisioning '{rec.get('name')}' (id={rec['id']}, slug={slug})")
+        print(f"==> Creating instance for '{rec.get('name')}' (id={rec['id']}, slug={slug})")
         if not slug:
             odoo_call(
                 models, cfg, uid, "write", [rec["id"]],
@@ -177,6 +191,67 @@ def main():
                 models, cfg, uid, "write", [rec["id"]],
                 {"provision_state": "error", "provision_error": str(exc)[:4000]},
             )
+    return len(records)
+
+
+def process_removals(models, cfg, uid):
+    # action_request_removal() deactivates the record immediately (so it
+    # stops being usable right away), which means it's normally excluded
+    # from search results - context active_test:False is needed to still
+    # find it here.
+    removal_ids = odoo_call(
+        models, cfg, uid, "search", [["provision_state", "=", "removal_requested"]],
+        context={"active_test": False},
+    )
+    if not removal_ids:
+        return 0
+
+    records = odoo_call(
+        models, cfg, uid, "read", removal_ids, fields=["id", "name", "provision_slug"],
+        context={"active_test": False},
+    )
+
+    for rec in records:
+        slug = rec.get("provision_slug")
+        print(f"==> Removing instance for '{rec.get('name')}' (id={rec['id']}, slug={slug})")
+        if not slug:
+            odoo_call(
+                models, cfg, uid, "write", [rec["id"]],
+                {"provision_state": "removal_error", "provision_error": "No instance slug recorded."},
+            )
+            continue
+
+        odoo_call(models, cfg, uid, "write", [rec["id"]], {"provision_state": "removing"})
+
+        try:
+            run_teardown_script(slug, cfg["ADDONS_DIR"])
+            odoo_call(
+                models, cfg, uid, "write", [rec["id"]],
+                {
+                    "provision_state": "removed",
+                    "provision_error": False,
+                    "provision_done_date": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+                },
+            )
+            print(f"    OK - removed slug={slug}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"    FAILED: {exc}", file=sys.stderr)
+            odoo_call(
+                models, cfg, uid, "write", [rec["id"]],
+                {"provision_state": "removal_error", "provision_error": str(exc)[:4000]},
+            )
+    return len(records)
+
+
+def main():
+    cfg = load_config()
+    uid, models = connect(cfg)
+
+    created = process_creations(models, cfg, uid)
+    removed = process_removals(models, cfg, uid)
+
+    if not created and not removed:
+        print(f"[{datetime.now(timezone.utc).isoformat()}] Nothing pending.")
 
 
 if __name__ == "__main__":

@@ -9,3 +9,10 @@
 # TEMPLATE_DIR="otm_whatsapp_group_bot_service"   # only if this client names it differently
 # BASE_PORT=8740                                   # only if 8732+ is already used by something else
 # DEFAULT_COUNTRY_CODE=971                         # e.g. a UAE-based client
+
+# NODE_BIN_OVERRIDE: only needed if the script's auto-detection (it scans
+# common nvm install folders for the newest Node found) picks the wrong
+# binary on this server. Set this to the exact output of, on this server:
+#   readlink -f $(which node)
+# Example (this server, confirmed 2026-09-30):
+# NODE_BIN_OVERRIDE="/root/.nvm/versions/node/v20.20.2/bin/node"

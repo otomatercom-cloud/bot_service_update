@@ -116,18 +116,48 @@ LOG_LEVEL=info
 EOF
 
 # ---- Install deps and start under PM2 ----
-# --interpreter is pinned explicitly to whatever Node this SCRIPT is
-# currently running under (not left to PM2's default "node" lookup).
-# PM2's background daemon locks in the Node version that was active when
-# the daemon itself first started, and silently keeps using that for
-# every future `pm2 start`, even if the shell's active Node has since
-# been upgraded (e.g. via nvm). If that daemon started under an old
-# Node, newer packages that are ESM-only (like recent
-# @whiskeysockets/baileys releases) fail with ERR_REQUIRE_ESM - same
-# files, wrong runtime. Pinning it here makes every new instance
-# immune to that, regardless of what Node version PM2's daemon happens
-# to be stuck on.
-NODE_BIN="$(command -v node)"
+# --interpreter is pinned explicitly to a known-good Node binary (never
+# left to PM2's default "node" lookup, and NOT just "command -v node"
+# either - see below).
+#
+# This script can be run two very different ways:
+#   1. Interactively, by a human in an SSH shell whose .bashrc/.profile
+#      has already loaded nvm - "command -v node" finds nvm's newer Node.
+#   2. By cron, via provisioner.py's subprocess call - cron's PATH is
+#      minimal and does NOT source any shell profile, so "command -v
+#      node" instead finds the OLD system Node (e.g. /usr/bin/node,
+#      often too old to require() an ESM-only package like recent
+#      @whiskeysockets/baileys releases - fails with ERR_REQUIRE_ESM).
+# Confirmed on this server: interactive shell -> Node 20.20.2 via nvm,
+# cron -> /usr/bin/node (old). Same script, same file, different PATH,
+# different (broken) result - exactly what caused repeated
+# ERR_REQUIRE_ESM crashes on auto-provisioned instances.
+#
+# Fix: NODE_BIN_OVERRIDE lets a client's bot_service_update.conf pin an
+# exact absolute path once (e.g. /root/.nvm/versions/node/v20.20.2/bin/node)
+# so it's correct no matter what triggers this script. If not set, fall
+# back to searching common nvm install locations for the newest Node
+# found there (covers the common case without per-client config), and
+# only fall back to plain "command -v node" as a last resort.
+if [ -n "${NODE_BIN_OVERRIDE:-}" ] && [ -x "$NODE_BIN_OVERRIDE" ]; then
+  NODE_BIN="$NODE_BIN_OVERRIDE"
+else
+  NODE_BIN=""
+  for nvm_root in "$HOME/.nvm/versions/node" "/root/.nvm/versions/node" "/usr/local/nvm/versions/node"; do
+    if [ -d "$nvm_root" ]; then
+      # shellcheck disable=SC2012
+      candidate="$(ls -1 "$nvm_root" 2>/dev/null | sort -V | tail -n1)"
+      if [ -n "$candidate" ] && [ -x "$nvm_root/$candidate/bin/node" ]; then
+        NODE_BIN="$nvm_root/$candidate/bin/node"
+        break
+      fi
+    fi
+  done
+  if [ -z "$NODE_BIN" ]; then
+    NODE_BIN="$(command -v node)"
+  fi
+fi
+echo "==> Using Node binary: $NODE_BIN ($("$NODE_BIN" -v))"
 (
   cd "$TARGET_DIR"
   npm install

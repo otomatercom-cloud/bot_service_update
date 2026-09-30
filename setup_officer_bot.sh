@@ -116,10 +116,22 @@ LOG_LEVEL=info
 EOF
 
 # ---- Install deps and start under PM2 ----
+# --interpreter is pinned explicitly to whatever Node this SCRIPT is
+# currently running under (not left to PM2's default "node" lookup).
+# PM2's background daemon locks in the Node version that was active when
+# the daemon itself first started, and silently keeps using that for
+# every future `pm2 start`, even if the shell's active Node has since
+# been upgraded (e.g. via nvm). If that daemon started under an old
+# Node, newer packages that are ESM-only (like recent
+# @whiskeysockets/baileys releases) fail with ERR_REQUIRE_ESM - same
+# files, wrong runtime. Pinning it here makes every new instance
+# immune to that, regardless of what Node version PM2's daemon happens
+# to be stuck on.
+NODE_BIN="$(command -v node)"
 (
   cd "$TARGET_DIR"
   npm install
-  pm2 start src/index.js --name "$PM2_NAME"
+  pm2 start src/index.js --name "$PM2_NAME" --interpreter "$NODE_BIN"
 )
 pm2 save
 

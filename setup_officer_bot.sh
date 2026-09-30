@@ -20,17 +20,32 @@
 # .env files.
 #
 # Run this from the parent addons folder, e.g.:
-#   cd /opt/lg19/lg19-custom-addons
+#   cd /opt/elysians/otomater-custom-addons
 #   /path/to/setup_officer_bot.sh priya
+#
+# MULTI-CLIENT: this script is meant to be identical across every client's
+# server - nothing client-specific should be hardcoded below. Per-client
+# differences (base port range, country code, template folder name) are
+# read from an optional bot_service_update.conf file sitting next to this
+# script; if that file is absent, the defaults below are used as-is. Copy
+# bot_service_update.conf.example to bot_service_update.conf on any server
+# whose defaults need to differ (e.g. a non-India client's country code).
 
 set -euo pipefail
 
-# ---- Config - adjust these three to match your server layout ----
-TEMPLATE_DIR="otm_whatsapp_group_bot_service"   # known-good base to copy from
 UPDATE_FILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"  # this script's own folder (bot_service_update/)
+
+# ---- Defaults - override per client via bot_service_update.conf, never here ----
+TEMPLATE_DIR="otm_whatsapp_group_bot_service"   # known-good base to copy from
 BASE_PORT=8732
 DEFAULT_COUNTRY_CODE=91
 # -------------------------------------------------------------------
+
+CONF_FILE="${UPDATE_FILES_DIR}/bot_service_update.conf"
+if [ -f "$CONF_FILE" ]; then
+  # shellcheck disable=SC1090
+  source "$CONF_FILE"
+fi
 
 OFFICER="${1:-}"
 PORT="${2:-}"

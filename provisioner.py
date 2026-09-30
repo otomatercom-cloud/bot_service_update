@@ -21,22 +21,26 @@ server, which is a privilege-escalation risk. Instead:
   4. The officer still has to scan the QR with their own phone -
      nothing can automate that part.
 
-SETUP (once):
+This same script/code is meant to be dropped, UNCHANGED, onto every
+client's server - everything that differs per client (Odoo URL, db,
+credentials, and the addons folder path) lives in provisioner.env, never
+in this file. Never edit ADDONS_DIR etc. below per client - edit
+provisioner.env instead.
+
+SETUP (once per client server):
   1. Put this file next to setup_officer_bot.sh (same bot_service_update/
-     folder is fine) on the Odoo server.
-  2. Copy provisioner.env.example to provisioner.env and fill in your
-     Odoo URL/db/credentials.
+     folder is fine) on that client's Odoo server.
+  2. Copy provisioner.env.example to provisioner.env and fill in that
+     client's Odoo URL/db/credentials/addons folder.
   3. Add a system cron entry (crontab -e, as the PM2-owning user - NOT
      necessarily root, whichever user already runs
      `pm2 start ...` today):
 
-       */3 * * * * /usr/bin/python3 /opt/lg19/lg19-custom-addons/bot_service_update/provisioner.py >> /var/log/otm_bot_provisioner.log 2>&1
+       */3 * * * * /usr/bin/python3 /path/to/bot_service_update/provisioner.py >> /var/log/otm_bot_provisioner.log 2>&1
 
   That's it - every 3 minutes it checks for new requests and actions them.
 """
 
-import configparser
-import json
 import os
 import subprocess
 import sys
@@ -46,9 +50,6 @@ from datetime import datetime, timezone
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ENV_FILE = os.path.join(SCRIPT_DIR, "provisioner.env")
 SETUP_SCRIPT = os.path.join(SCRIPT_DIR, "setup_officer_bot.sh")
-# The folder that CONTAINS otm_whatsapp_group_bot_service, otm_whatsapp_lead_bot_*,
-# etc. - setup_officer_bot.sh must be run from here.
-ADDONS_DIR = os.environ.get("OTM_ADDONS_DIR", "/opt/lg19/lg19-custom-addons")
 
 MODEL = "otm.whatsapp.lead.bot"
 
@@ -56,7 +57,7 @@ MODEL = "otm.whatsapp.lead.bot"
 def load_config():
     if not os.path.exists(ENV_FILE):
         print(f"ERROR: {ENV_FILE} not found. Copy provisioner.env.example to provisioner.env "
-              f"and fill in your Odoo connection details.", file=sys.stderr)
+              f"and fill in this client's Odoo connection details.", file=sys.stderr)
         sys.exit(1)
     cfg = {}
     with open(ENV_FILE) as f:
@@ -66,6 +67,13 @@ def load_config():
                 continue
             key, _, value = line.partition("=")
             cfg[key.strip()] = value.strip()
+    # ADDONS_DIR defaults to this script's own folder's parent (bot_service_update/
+    # normally sits directly inside the client's addons folder) if not set explicitly -
+    # still overridable per client via provisioner.env or the OTM_ADDONS_DIR env var.
+    cfg.setdefault(
+        "ADDONS_DIR",
+        os.environ.get("OTM_ADDONS_DIR", os.path.dirname(SCRIPT_DIR)),
+    )
     required = ["ODOO_URL", "ODOO_DB", "ODOO_USERNAME", "ODOO_API_KEY"]
     missing = [k for k in required if not cfg.get(k)]
     if missing:
@@ -90,12 +98,12 @@ def odoo_call(models, cfg, uid, method, *args, **kwargs):
     )
 
 
-def run_setup_script(slug):
+def run_setup_script(slug, addons_dir):
     """Runs setup_officer_bot.sh <slug>, then reads the .env it created
     to get the port/token back out (more robust than scraping stdout)."""
     result = subprocess.run(
         [SETUP_SCRIPT, slug],
-        cwd=ADDONS_DIR,
+        cwd=addons_dir,
         capture_output=True,
         text=True,
         timeout=600,  # npm install can be slow on a small server
@@ -104,7 +112,7 @@ def run_setup_script(slug):
     if result.returncode != 0:
         raise RuntimeError(f"setup_officer_bot.sh exited {result.returncode}:\n{log[-4000:]}")
 
-    env_path = os.path.join(ADDONS_DIR, f"otm_whatsapp_lead_bot_{slug}", ".env")
+    env_path = os.path.join(addons_dir, f"otm_whatsapp_lead_bot_{slug}", ".env")
     if not os.path.exists(env_path):
         raise RuntimeError(f"Script reported success but {env_path} was not created:\n{log[-4000:]}")
 
@@ -151,7 +159,7 @@ def main():
         odoo_call(models, cfg, uid, "write", [rec["id"]], {"provision_state": "provisioning"})
 
         try:
-            port, token, log = run_setup_script(slug)
+            port, token, log = run_setup_script(slug, cfg["ADDONS_DIR"])
             odoo_call(
                 models, cfg, uid, "write", [rec["id"]],
                 {

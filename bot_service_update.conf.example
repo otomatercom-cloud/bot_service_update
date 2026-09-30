@@ -1,0 +1,11 @@
+# Copy to bot_service_update.conf (same folder) ONLY on a client server
+# whose defaults need to differ from the standard ones. This file is
+# plain bash - it's sourced directly by setup_officer_bot.sh.
+#
+# Leave it absent entirely on a normal India-based client - the script's
+# built-in defaults (TEMPLATE_DIR=otm_whatsapp_group_bot_service,
+# BASE_PORT=8732, DEFAULT_COUNTRY_CODE=91) are correct as-is.
+
+# TEMPLATE_DIR="otm_whatsapp_group_bot_service"   # only if this client names it differently
+# BASE_PORT=8740                                   # only if 8732+ is already used by something else
+# DEFAULT_COUNTRY_CODE=971                         # e.g. a UAE-based client

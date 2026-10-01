@@ -126,7 +126,11 @@ app.post("/send-direct", async (req, res) => {
   const { to, message, media } = req.body || {};
   try {
     const result = await wa.sendDirectMessage(to, message, media);
-    res.json({ success: true, message_id: result.messageId });
+    // jid: Baileys' own resolved chat identity for this send (see
+    // whatsapp.js's sendDirectMessage) - stored by Odoo so a later
+    // incoming message from this same chat can be matched back without
+    // requiring an explicit quote-reply.
+    res.json({ success: true, message_id: result.messageId, jid: result.jid || null });
   } catch (err) {
     logger.warn({ err: err.message, code: err.code, to }, "Direct send failed");
     res.status(err.code === "NOT_CONNECTED" ? 503 : 400).json({

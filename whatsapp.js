@@ -61,12 +61,21 @@ function createWhatsappManager({ authStateDir, logLevel, onInboundReply }) {
 
     sock.ev.on("creds.update", saveCreds);
 
-    // NEW: forwards only a direct WhatsApp quote-reply to the officer's
-    // own Odoo (otm_whatsapp_lead_scheduler's optional reply chatbot) - see
-    // onInboundReply below, wired up in index.js. Deliberately does NOT
-    // forward every incoming message, only ones Baileys itself confirms
-    // are a reply (contextInfo.stanzaId set) - matches the explicit scope
-    // decision (reply-to-reply only, never a general-purpose inbox).
+    // NEW: forwards a customer's incoming message to the officer's own
+    // Odoo (otm_whatsapp_lead_scheduler's optional reply chatbot) - see
+    // onInboundReply below, wired up in index.js.
+    //
+    // CHANGED FROM THE ORIGINAL (reply-only) BEHAVIOUR: this used to only
+    // forward a message that was an explicit WhatsApp quote-reply
+    // (contextInfo.stanzaId set), and ignore anything else. Per an explicit
+    // later decision, it now forwards ANY plain text message from the
+    // customer too - quotedId is still captured and sent when present (the
+    // Odoo side still prefers it, since it's the most precise match), but
+    // its ABSENCE no longer blocks forwarding. Trade-off accepted knowingly:
+    // every message the customer sends in this chat now gets matched to
+    // "whatever this officer's bot last sent them" and can trigger an
+    // auto-reply, not just explicit replies - there is no narrower signal
+    // available once a customer is not required to swipe-reply.
     sock.ev.on("messages.upsert", async ({ messages, type }) => {
       if (type !== "notify" || !onInboundReply) return;
       for (const msg of messages) {
@@ -86,7 +95,7 @@ function createWhatsappManager({ authStateDir, logLevel, onInboundReply }) {
             (m.videoMessage && m.videoMessage.contextInfo) ||
             null;
           const quotedId = ctx && ctx.stanzaId ? ctx.stanzaId : null;
-          if (!quotedId) continue; // not a reply to anything - ignore, per scope decision
+          if (!text && !quotedId) continue; // nothing to match against (e.g. a sticker/reaction)
 
           await onInboundReply({ from: msg.key.remoteJid, text, quotedId });
         } catch (err) {
@@ -226,7 +235,17 @@ function createWhatsappManager({ authStateDir, logLevel, onInboundReply }) {
 
     const content = _buildContent(text, media);
     const result = await state.sock.sendMessage(jid, content);
-    return { messageId: result && result.key ? result.key.id : null };
+    // result.key.remoteJid is Baileys' own resolved chat identity for this
+    // send - it can differ from the plain "<number>@s.whatsapp.net" we
+    // passed in (e.g. WhatsApp's newer "@lid" linked-identity addressing).
+    // Recording THIS exact value (not the number we built) is what lets a
+    // later incoming message's own remoteJid be matched back to this chat
+    // even when the customer doesn't swipe-reply - see messages.upsert
+    // above and lead_whatsapp_inbound.py's fallback lookup.
+    return {
+      messageId: result && result.key ? result.key.id : null,
+      jid: (result && result.key && result.key.remoteJid) || jid,
+    };
   }
 
   function _buildContent(text, media) {

@@ -97,7 +97,26 @@ function createWhatsappManager({ authStateDir, logLevel, onInboundReply }) {
           const quotedId = ctx && ctx.stanzaId ? ctx.stanzaId : null;
           if (!text && !quotedId) continue; // nothing to match against (e.g. a sticker/reaction)
 
-          await onInboundReply({ from: msg.key.remoteJid, text, quotedId });
+          // ODOO/BAILEYS RULE (confirmed via live debug logging): WhatsApp's
+          // newer privacy layer reports msg.key.remoteJid as an opaque
+          // "<id>@lid" identity for some chats - NOT the "<number>@s.
+          // whatsapp.net" JID that sendDirectMessage() resolved and stored
+          // on the OUTGOING message (see sendDirectMessage()'s own comment
+          // below). These two values can legitimately differ for the exact
+          // same chat, so matching on remoteJid alone silently fails
+          // ("matched": false even though the chat is right).
+          //
+          // The fix: Baileys also puts the real phone-number JID on
+          // msg.key.senderPn whenever remoteJid is a @lid - confirmed by
+          // logging the full message key (it showed remoteJid="<id>@lid"
+          // alongside senderPn="<number>@s.whatsapp.net", matching exactly
+          // what was stored for the prior outgoing message to this same
+          // chat). Prefer senderPn when present; fall back to remoteJid for
+          // chats that aren't using @lid addressing at all (senderPn absent
+          // there).
+          const from = msg.key.senderPn || msg.key.remoteJid;
+
+          await onInboundReply({ from, text, quotedId });
         } catch (err) {
           logger.warn({ err }, "Failed handling an inbound message (ignored, bot keeps running)");
         }

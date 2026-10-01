@@ -30,7 +30,7 @@ const {
 const QRCode = require("qrcode");
 const pino = require("pino");
 
-function createWhatsappManager({ authStateDir, logLevel }) {
+function createWhatsappManager({ authStateDir, logLevel, onInboundReply }) {
   const logger = pino({ level: logLevel || "info" });
   const baileysLogger = pino({ level: "warn" }); // Baileys itself is very chatty on "info"
 
@@ -60,6 +60,40 @@ function createWhatsappManager({ authStateDir, logLevel }) {
     state.sock = sock;
 
     sock.ev.on("creds.update", saveCreds);
+
+    // NEW: forwards only a direct WhatsApp quote-reply to the officer's
+    // own Odoo (otm_whatsapp_lead_scheduler's optional reply chatbot) - see
+    // onInboundReply below, wired up in index.js. Deliberately does NOT
+    // forward every incoming message, only ones Baileys itself confirms
+    // are a reply (contextInfo.stanzaId set) - matches the explicit scope
+    // decision (reply-to-reply only, never a general-purpose inbox).
+    sock.ev.on("messages.upsert", async ({ messages, type }) => {
+      if (type !== "notify" || !onInboundReply) return;
+      for (const msg of messages) {
+        try {
+          if (!msg.message || (msg.key && msg.key.fromMe)) continue; // only real customer messages
+
+          const m = msg.message;
+          const text =
+            m.conversation ||
+            (m.extendedTextMessage && m.extendedTextMessage.text) ||
+            (m.imageMessage && m.imageMessage.caption) ||
+            (m.videoMessage && m.videoMessage.caption) ||
+            "";
+          const ctx =
+            (m.extendedTextMessage && m.extendedTextMessage.contextInfo) ||
+            (m.imageMessage && m.imageMessage.contextInfo) ||
+            (m.videoMessage && m.videoMessage.contextInfo) ||
+            null;
+          const quotedId = ctx && ctx.stanzaId ? ctx.stanzaId : null;
+          if (!quotedId) continue; // not a reply to anything - ignore, per scope decision
+
+          await onInboundReply({ from: msg.key.remoteJid, text, quotedId });
+        } catch (err) {
+          logger.warn({ err }, "Failed handling an inbound message (ignored, bot keeps running)");
+        }
+      }
+    });
 
     sock.ev.on("connection.update", async (update) => {
       const { connection, lastDisconnect, qr } = update;

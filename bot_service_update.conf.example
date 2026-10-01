@@ -16,3 +16,12 @@
 #   readlink -f $(which node)
 # Example (this server, confirmed 2026-09-30):
 # NODE_BIN_OVERRIDE="/root/.nvm/versions/node/v20.20.2/bin/node"
+
+# ODOO_INBOUND_URL: only set this if you want the optional reply chatbot
+# (otm_whatsapp_lead_scheduler > WhatsApp > Configuration > Lead Scheduler
+# Settings > Enable Reply Chatbot) to work. Every NEW officer instance
+# created after you set this will have it written into its own .env
+# automatically - existing instances need it added to their .env by hand
+# (then `pm2 restart <name>`) since this script never touches an existing
+# instance's files.
+# ODOO_INBOUND_URL="https://erp.elysians360.in/otm_whatsapp_lead/inbound"

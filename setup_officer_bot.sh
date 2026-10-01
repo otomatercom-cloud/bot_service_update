@@ -39,6 +39,11 @@ UPDATE_FILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"  # this script'
 TEMPLATE_DIR="otm_whatsapp_group_bot_service"   # known-good base to copy from
 BASE_PORT=8732
 DEFAULT_COUNTRY_CODE=91
+# Optional reply-chatbot webhook (see whatsapp.js/index.js's onInboundReply).
+# Blank = feature off for every new instance until a client sets this in
+# bot_service_update.conf, e.g.:
+#   ODOO_INBOUND_URL="https://erp.example.com/otm_whatsapp_lead/inbound"
+ODOO_INBOUND_URL=""
 # -------------------------------------------------------------------
 
 CONF_FILE="${UPDATE_FILES_DIR}/bot_service_update.conf"
@@ -113,6 +118,7 @@ AUTH_STATE_DIR=./auth_info
 API_TOKEN=${TOKEN}
 DEFAULT_COUNTRY_CODE=${DEFAULT_COUNTRY_CODE}
 LOG_LEVEL=info
+ODOO_INBOUND_URL=${ODOO_INBOUND_URL}
 EOF
 
 # ---- Install deps and start under PM2 ----

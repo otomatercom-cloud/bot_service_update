@@ -10,6 +10,11 @@ const logger = pino({ level: process.env.LOG_LEVEL || "info" });
 const PORT = parseInt(process.env.PORT || "8721", 10);
 const API_TOKEN = process.env.API_TOKEN;
 const AUTH_STATE_DIR = process.env.AUTH_STATE_DIR || "./auth_info";
+// NEW, optional: when set, a direct WhatsApp quote-reply to a message this
+// instance sent is forwarded here (otm_whatsapp_lead_scheduler's reply
+// chatbot webhook). Blank/unset = feature simply off - nothing changes for
+// an existing instance that doesn't have this var, no error, no extra load.
+const ODOO_INBOUND_URL = process.env.ODOO_INBOUND_URL || "";
 
 if (!API_TOKEN || API_TOKEN === "change-me-to-a-real-random-secret") {
   logger.error(
@@ -19,7 +24,38 @@ if (!API_TOKEN || API_TOKEN === "change-me-to-a-real-random-secret") {
   process.exit(1);
 }
 
-const wa = createWhatsappManager({ authStateDir: AUTH_STATE_DIR, logLevel: process.env.LOG_LEVEL });
+/**
+ * Forwards a confirmed quote-reply to Odoo's inbound webhook, authenticated
+ * with this SAME instance's own API_TOKEN (Odoo already knows it - it's the
+ * same token Odoo uses to call this service's own /send-direct etc., so no
+ * second secret needs provisioning anywhere). Uses the global fetch() built
+ * into Node 18+ - no new dependency. Never throws: a webhook failure must
+ * never crash the bot's own WhatsApp connection.
+ */
+async function forwardInboundReply({ from, text, quotedId }) {
+  if (!ODOO_INBOUND_URL) return; // feature not configured on this instance
+  try {
+    const resp = await fetch(ODOO_INBOUND_URL, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer " + API_TOKEN,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ from, text, quoted_id: quotedId }),
+    });
+    if (!resp.ok) {
+      logger.warn({ status: resp.status }, "Odoo inbound webhook returned a non-OK status");
+    }
+  } catch (err) {
+    logger.warn({ err: err.message }, "Could not reach Odoo's inbound webhook (ignored)");
+  }
+}
+
+const wa = createWhatsappManager({
+  authStateDir: AUTH_STATE_DIR,
+  logLevel: process.env.LOG_LEVEL,
+  onInboundReply: forwardInboundReply,
+});
 
 const app = express();
 app.use(express.json({ limit: "150mb" })); // base64 media inflates ~33%; WhatsApp's own cap is ~100MB for documents

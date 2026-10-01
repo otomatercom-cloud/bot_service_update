@@ -33,7 +33,14 @@ if (!API_TOKEN || API_TOKEN === "change-me-to-a-real-random-secret") {
  * never crash the bot's own WhatsApp connection.
  */
 async function forwardInboundReply({ from, text, quotedId }) {
-  if (!ODOO_INBOUND_URL) return; // feature not configured on this instance
+  if (!ODOO_INBOUND_URL) {
+    logger.info(
+      { from, quotedId },
+      "Quote-reply detected but ODOO_INBOUND_URL is not set on this instance - not forwarded"
+    );
+    return;
+  }
+  logger.info({ from, quotedId, url: ODOO_INBOUND_URL }, "Forwarding quote-reply to Odoo");
   try {
     const resp = await fetch(ODOO_INBOUND_URL, {
       method: "POST",
@@ -43,8 +50,11 @@ async function forwardInboundReply({ from, text, quotedId }) {
       },
       body: JSON.stringify({ from, text, quoted_id: quotedId }),
     });
+    const body = await resp.text();
     if (!resp.ok) {
-      logger.warn({ status: resp.status }, "Odoo inbound webhook returned a non-OK status");
+      logger.warn({ status: resp.status, body }, "Odoo inbound webhook returned a non-OK status");
+    } else {
+      logger.info({ status: resp.status, body }, "Odoo inbound webhook accepted the reply");
     }
   } catch (err) {
     logger.warn({ err: err.message }, "Could not reach Odoo's inbound webhook (ignored)");
